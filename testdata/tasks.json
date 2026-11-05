@@ -1,0 +1,12 @@
+[
+  {
+    "title": "Learn Go interfaces",
+    "description": "Understand dependency inversion and small interfaces",
+    "completed": false
+  },
+  {
+    "title": "Build a REST API",
+    "description": "Implement CRUD with go-chi",
+    "completed": false
+  }
+]
