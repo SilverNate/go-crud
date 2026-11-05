@@ -1,0 +1,55 @@
+# Local/dev-like stack: API + PostgreSQL.
+# Secrets come from a git-ignored .env file (copy .env.example). Never commit it.
+name: go-task-api
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-taskuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-taskdb}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs ONLY on first start with an empty volume. Schema changes later need a real migration tool.
+      - ./migrations/001_create_tasks.up.sql:/docker-entrypoint-initdb.d/001_create_tasks.sql:ro
+    networks: [backend]
+    # No "ports:" on purpose: the database is reachable only from containers on `backend`.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+    image: go-task-api:local
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy   # wait for Postgres to accept connections
+    environment:
+      HTTP_ADDR: ":8080"
+      STORAGE_DRIVER: postgres
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WORKER_QUEUE_SIZE: ${WORKER_QUEUE_SIZE:-64}
+      # Host is the Compose SERVICE NAME "db", not localhost (localhost inside the
+      # api container is the api container itself). If the password contains
+      # URL-special characters (@ : / ? #) percent-encode it here.
+      DATABASE_URL: postgres://${POSTGRES_USER:-taskuser}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-taskdb}?sslmode=disable
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"   # loopback only; use a reverse proxy for real exposure
+    networks: [backend]
+    stop_grace_period: 20s     # app allows 10s for in-flight requests; Docker's default (10s) would race SIGKILL
+    read_only: true            # immutable root filesystem
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  backend:
+
+volumes:
+  pgdata:

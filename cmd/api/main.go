@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,6 +22,15 @@ import (
 
 func main() {
 	cfg := config.Load()
+
+	// `api healthcheck` is used by the Docker HEALTHCHECK (see Dockerfile).
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		if err := runHealthcheck(cfg.HTTPAddr, 3*time.Second); err != nil {
+			fmt.Fprintln(os.Stderr, "unhealthy:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	log := logger.New(cfg.LogLevel)
 
 	repo, closeRepo, err := buildRepository(cfg)

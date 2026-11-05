@@ -110,6 +110,17 @@ go run ./cmd/api
 
 The migration is intentionally plain SQL so its lifecycle is explicit. A migration runner can be added in a later refinement.
 
+## Run with Docker Compose
+
+```bash
+cp .env.example .env     # set POSTGRES_PASSWORD
+docker compose up -d --build
+bash scripts/smoke.sh    # CRUD smoke test against http://localhost:8080
+docker compose down
+```
+
+Details, concepts and troubleshooting: [docs/docker.md](docs/docker.md).
+
 ## Test and quality checks
 
 All commands work in Git Bash on Windows:
@@ -184,4 +195,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) (branching, commit conventions, PRs, rele
 
 ## Phase 2 (not included)
 
-GitHub workflow, Docker image/Compose, GitHub Actions CI, Grafana/Prometheus, and Kubernetes manifests are intentionally deferred until Phase 1 acceptance.
+GitHub Actions CI, Grafana/Prometheus, and Kubernetes manifests are intentionally deferred until Phase 1 acceptance.
