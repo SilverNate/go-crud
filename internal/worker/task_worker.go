@@ -9,11 +9,17 @@ import (
 
 // Worker is a bounded, in-process event consumer. Events are best-effort;
 // use a transactional outbox if delivery must survive process restarts.
+//
+// Lifecycle: producers call Publish concurrently; Stop closes the queue exactly
+// once. mu guards the "closed" state so a channel is never closed while a
+// producer can still send on it (which would panic).
 type Worker struct {
-	queue chan usecase.TaskEvent
-	log   *slog.Logger
-	wg    sync.WaitGroup
-	once  sync.Once
+	queue  chan usecase.TaskEvent
+	log    *slog.Logger
+	wg     sync.WaitGroup
+	once   sync.Once
+	mu     sync.RWMutex // RLock: publishers; Lock: Stop
+	closed bool
 }
 
 func New(queueSize int, log *slog.Logger) *Worker {
@@ -36,7 +42,14 @@ func (w *Worker) Start() {
 	}()
 }
 
+// Publish never blocks. It returns false if the queue is full or the worker has
+// been stopped.
 func (w *Worker) Publish(event usecase.TaskEvent) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.closed {
+		return false
+	}
 	select {
 	case w.queue <- event:
 		return true
@@ -45,7 +58,14 @@ func (w *Worker) Publish(event usecase.TaskEvent) bool {
 	}
 }
 
+// Stop rejects new events, lets the consumer drain what is already queued, and
+// waits for it to exit. It is safe to call more than once.
 func (w *Worker) Stop() {
-	w.once.Do(func() { close(w.queue) })
+	w.once.Do(func() {
+		w.mu.Lock() // waits for in-flight (non-blocking) Publish calls
+		w.closed = true
+		close(w.queue)
+		w.mu.Unlock()
+	})
 	w.wg.Wait()
 }
