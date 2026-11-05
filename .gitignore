@@ -1,5 +1,28 @@
+# --- Secrets & local config (never commit) ---
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+kubeconfig*
+# Real Kubernetes secrets (Phase 2.5): commit only *.example.yaml templates
+k8s/secret.yaml
+*.secret.yaml
+
+# --- Build & test output ---
 bin/
-coverage.out
+dist/
+*.exe
+*.test
+*.out
+coverage.*
 *.log
+
+# --- OS / editor ---
 .DS_Store
+Thumbs.db
+.idea/
+*.swp
+.vscode/*
+!.vscode/extensions.json

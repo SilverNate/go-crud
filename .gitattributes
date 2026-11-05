@@ -1,0 +1,7 @@
+# Normalise line endings so Windows (CRLF) and Linux/CI/Docker (LF) agree.
+* text=auto eol=lf
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.sql text eol=lf
+*.png binary
+*.zip binary
