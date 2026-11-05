@@ -85,7 +85,7 @@ Create a database named `taskdb`, apply the migration, then configure:
 
 ```bash
 export STORAGE_DRIVER=postgres
-export DATABASE_URL='postgres://postgres:postgres@localhost:5432/taskdb?sslmode=disable'
+export DATABASE_URL='postgres://USER:PASSWORD@localhost:5432/taskdb?sslmode=disable'
 ```
 
 Apply schema:
@@ -112,15 +112,52 @@ The migration is intentionally plain SQL so its lifecycle is explicit. A migrati
 
 ## Test and quality checks
 
+All commands work in Git Bash on Windows:
+
 ```bash
-gofmt -w .
-go test ./...
-go test -race ./...
+gofmt -w .          # format
+go vet ./...        # static checks
+go test ./...       # all tests (PostgreSQL integration tests skip if not configured)
+go test -race ./... # race detector (needs CGO + gcc, see below)
 go test -cover ./...
-go vet ./...
+# or everything at once:
+bash scripts/check.sh
 ```
 
-PostgreSQL integration tests should run against a disposable database; unit tests do not require PostgreSQL.
+### Test layout
+
+| Layer | Location | Style |
+|---|---|---|
+| Domain | `internal/domain/task_test.go` | table-driven, no mocks |
+| Use case | `internal/usecase/task_test.go` | hand-written fake repository + fake event publisher |
+| HTTP handlers | `internal/delivery/http/handler/task_test.go` | `httptest` + stub service, real chi routing |
+| Router / full stack | `internal/delivery/http/router_test.go` | real router + use case + memory repo; unknown routes, 405s, request logging |
+| Memory repository | `internal/repository/memory/*_test.go` | CRUD, ID uniqueness, concurrency (`-race`) |
+| PostgreSQL repository | `internal/repository/postgres/task_test.go` | integration tests against a real database |
+| Worker | `internal/worker/task_worker_test.go` | queue-full, drain on stop, publish-after-stop, concurrent publishers |
+| Config / logger / wiring | `internal/config`, `internal/logger`, `cmd/api` | small unit tests |
+
+### PostgreSQL integration tests
+
+They only run when `TEST_DATABASE_URL` is set, and **refuse to run unless the database name contains `test`**. Each run creates its own schema (`it_<pid>_<time>`), applies `migrations/001_create_tasks.up.sql` inside it, and drops the schema afterwards, so no existing data is touched.
+
+```bash
+# one-time: create a disposable database
+psql "postgres://postgres:YOUR_PASSWORD@localhost:5432/postgres" -c "CREATE DATABASE taskdb_test"
+
+export TEST_DATABASE_URL='postgres://postgres:YOUR_PASSWORD@localhost:5432/taskdb_test?sslmode=disable'
+go test -v ./internal/repository/postgres/
+```
+
+### Race detector on Windows
+
+`go test -race` needs `CGO_ENABLED=1` and a C compiler on `PATH`.
+
+1. Install a MinGW-w64 GCC (for example via MSYS2: `pacman -S mingw-w64-ucrt-x86_64-gcc`, or the WinLibs build).
+2. Add its `bin` directory to `PATH` and confirm in Git Bash: `gcc --version`.
+3. Run `CGO_ENABLED=1 go test -race ./...`.
+
+If GCC is unavailable, `scripts/check.sh` prints a SKIPPED notice instead of failing; CI on Linux (Phase 2) runs the race detector unconditionally.
 
 ## Concurrency and channels
 
@@ -134,10 +171,16 @@ The memory adapter protects its map and ID counter with `sync.RWMutex`. The work
 
 1. Add pagination and filtering to `List`.
 2. Add optimistic concurrency (version column / `If-Match`) to prevent lost updates between clients.
-3. Add PostgreSQL integration tests and automated migration execution.
-4. Add request body size limits, strict trailing JSON validation, and a consistent error envelope.
-5. Add graceful worker draining with producer shutdown coordination.
+3. Automated migration execution (integration tests currently apply the SQL file themselves).
+4. Return `413` (not `400`) for request bodies over the 1 MiB limit.
+5. Make the memory fixture path (`testdata/tasks.json`) configurable; it is currently relative to the working directory.
 6. Add observability metrics and tracing in Phase 2.
+
+Done in Phase 1: worker shutdown no longer panics or races with publishers; strict single-JSON-value request parsing; integration tests for PostgreSQL.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) (branching, commit conventions, PRs, releases) and [docs/git-workflow.md](docs/git-workflow.md). Copy `.env.example` to `.env` for local settings; `.env` is never committed.
 
 ## Phase 2 (not included)
 
