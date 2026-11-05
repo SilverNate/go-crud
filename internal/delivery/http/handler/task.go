@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -134,8 +135,10 @@ func decodeJSON(r *http.Request, dst any) error {
 	if err := decoder.Decode(dst); err != nil {
 		return err
 	}
-	if decoder.Decode(&struct{}{}) == nil {
-		return errors.New("request body must contain one JSON value")
+	// Anything after the first value (a second object OR garbage) is an error.
+	// Only a clean io.EOF means the body held exactly one JSON value.
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("request body must contain exactly one JSON value")
 	}
 	return nil
 }
