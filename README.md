@@ -121,6 +121,10 @@ docker compose down
 
 Details, concepts and troubleshooting: [docs/docker.md](docs/docker.md).
 
+## CI/CD
+
+GitHub Actions: `.github/workflows/ci.yml` (format, vet, race tests, PostgreSQL integration tests, Docker smoke test) and `.github/workflows/cd.yml` (publish image to GHCR on release tags, environment-gated deploy). See [docs/cd.md](docs/cd.md).
+
 ## Test and quality checks
 
 All commands work in Git Bash on Windows:
@@ -193,6 +197,6 @@ Done in Phase 1: worker shutdown no longer panics or races with publishers; stri
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) (branching, commit conventions, PRs, releases) and [docs/git-workflow.md](docs/git-workflow.md). Copy `.env.example` to `.env` for local settings; `.env` is never committed.
 
-## Phase 2 (not included)
+## Roadmap
 
-GitHub Actions CI, Grafana/Prometheus, and Kubernetes manifests are intentionally deferred until Phase 1 acceptance.
+Prometheus/Grafana observability and Kubernetes manifests come next (roadmap phases 2.4 and 2.5).

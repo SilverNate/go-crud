@@ -25,3 +25,18 @@ docker compose logs api | tail -5                   # expect "shutdown signal re
 docker compose down                                 # volume kept
 docker compose up -d && curl -s localhost:8080/api/v1/tasks   # data persisted across down/up
 ```
+
+## 2.3 CI/CD  (status: written and linted; NOT yet run on GitHub)
+
+| Item | Status | Evidence |
+|---|---|---|
+| `ci.yml`, `cd.yml` syntax, expressions, embedded shell | Verified | `actionlint`: 0 errors; `shellcheck scripts/*.sh` clean |
+| CI passes on GitHub | **NOT verified** | needs the repo pushed to GitHub |
+| Integration tests against the PostgreSQL service | **NOT verified** | Go PostgreSQL tests have never executed anywhere yet |
+| Image published to GHCR | **NOT verified** | needs a `v*.*.*` tag on `main` |
+| Deployment + health check + rollback | **NOT verified, provider not chosen** | placeholder step; see docs/cd.md |
+
+### Verify
+1. Push `main` and `develop`, open a PR from a `feature/*` branch into `develop`.
+2. The **CI** run must show both jobs green. If the PostgreSQL integration step fails, that is the first real execution of those tests: paste me the log and I will fix it.
+3. After merging to `main`: `git tag -a v0.1.0 -m "first release" && git push origin v0.1.0`; check Actions > CD and Packages for the image.

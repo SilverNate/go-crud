@@ -1,0 +1,141 @@
+name: CD
+
+# Continuous DELIVERY: build once, publish an immutable image, then promote that
+# same image between environments. Kept separate from CI on purpose: CI answers
+# "is this change good?", CD answers "ship this exact artifact".
+#
+#  - Pushing a tag vX.Y.Z (cut from main) builds + publishes the image and deploys to STAGING.
+#  - A manual run ("Run workflow") can promote an existing tag to production or roll back,
+#    WITHOUT rebuilding (set image_tag).
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, production]
+        default: staging
+      image_tag:
+        description: "Existing image tag to deploy/rollback to (e.g. v0.1.0). Leave empty to build from the selected ref."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# Never run two deployments to the same environment at once; never cancel one mid-flight.
+concurrency:
+  group: deploy-${{ github.event_name == 'push' && 'staging' || inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and publish image
+    if: ${{ inputs.image_tag == '' }}   # empty for tag pushes, so this runs there
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write                  # push to GitHub Container Registry with the built-in token
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0               # needed to verify the commit is on main
+
+      - name: Only release from main
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*|refs/heads/main) ;;
+            *) echo "::error::Refusing to publish from $GITHUB_REF (allowed: main, v* tags)"; exit 1 ;;
+          esac
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA is not reachable from main; merge it through a PR first."; exit 1
+          fi
+
+      - name: Compute image name
+        id: ref
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"   # GHCR requires lowercase
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.ref.outputs.image }}
+          tags: |
+            type=ref,event=tag
+            type=sha,format=long
+          # No "latest": deployments must name an exact, immutable version.
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+
+  deploy:
+    name: Deploy
+    needs: build
+    # Run when build succeeded, or was intentionally skipped (promotion/rollback of an existing tag).
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') && vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # GitHub Environments hold per-environment secrets/variables and can require
+    # manual approval (Settings > Environments > production > Required reviewers).
+    environment: ${{ github.event_name == 'push' && 'staging' || inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image reference
+        id: img
+        env:
+          TAG: ${{ inputs.image_tag || github.ref_name }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:${TAG}"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Deploying $image"
+
+      # ---------------------------------------------------------------------
+      # PROVIDER-SPECIFIC STEP: intentionally a placeholder (no provider chosen
+      # yet; see docs/cd.md for options). Replace with ONE of the examples.
+      # All credentials must come from environment secrets, never from the repo.
+      # ---------------------------------------------------------------------
+      - name: Deploy (placeholder)
+        env:
+          IMAGE: ${{ steps.img.outputs.image }}
+        run: |
+          echo "::warning::No deployment provider configured. Would deploy $IMAGE"
+          # Example: VPS + Docker Compose over SSH (needs secrets SSH_HOST, SSH_USER, SSH_KEY)
+          #   install -m 600 /dev/null key && printf '%s' "$SSH_KEY" > key
+          #   ssh -i key -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" \
+          #     "cd /srv/go-task-api && IMAGE=$IMAGE docker compose pull && IMAGE=$IMAGE docker compose up -d --wait"
+          # Example: Kubernetes
+          #   kubectl set image deployment/go-task-api api="$IMAGE" -n task-api
+          #   kubectl rollout status deployment/go-task-api -n task-api --timeout=120s
+
+      - name: Post-deploy health check
+        if: ${{ vars.HEALTHCHECK_URL != '' }}
+        env:
+          URL: ${{ vars.HEALTHCHECK_URL }}      # e.g. https://tasks.example.com/api/v1/health
+        run: |
+          curl --fail --silent --show-error --retry 12 --retry-delay 5 --retry-all-errors "$URL"
+          echo "healthy"
+
+      - name: Rollback hint (on failure)
+        if: failure()
+        run: echo "::error::Deployment failed. Roll back by re-running this workflow with image_tag set to the previous good version."
